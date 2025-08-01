@@ -7,3 +7,4 @@ numpy
 google-generativeai
 python-dotenv
 PySide6
+pypdf
