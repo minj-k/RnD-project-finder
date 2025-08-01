@@ -1,4 +1,4 @@
-# collector.py (Final Version - Selenium with Debug Logging)
+# collector.py (Final Version - Selenium with Maximum Stability)
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class DataCollector:
     """
     Selenium을 사용하여 동적 웹사이트의 정보를 수집하는 최종 안정화 버전.
-    오류 발생 시 디버깅을 위한 HTML 페이지 저장 기능이 포함되어 있습니다.
+    안정성을 극대화하고, 오류 발생 시 디버깅을 위한 HTML 페이지 저장 기능이 포함되어 있습니다.
     """
     def __init__(self):
         self.sources = {'ntis': self._scrape_ntis}
@@ -29,16 +29,31 @@ class DataCollector:
         self.driver = None
         try:
             options = webdriver.ChromeOptions()
-            # 디버깅을 위해 헤드리스 모드는 비활성화 (실행 시 크롬 창이 보임)
+            # [수정] 디버깅을 위해 헤드리스 모드는 계속 비활성화합니다.
             # options.add_argument('--headless') 
+            
+            # --- 안정성 강화를 위한 옵션 총동원 ---
             options.add_argument("window-size=1920,1080")
             options.add_argument("--log-level=3")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-gpu")
             options.add_argument("--disable-dev-shm-usage")
-            options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            options.add_argument("--disable-infobars")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-browser-side-navigation")
+            options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+            options.add_experimental_option('useAutomationExtension', False)
             
             self.driver = webdriver.Chrome(service=Service(), options=options)
+            # 자동화 탐지를 피하기 위한 스크립트 실행
+            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": """
+                    Object.defineProperty(navigator, 'webdriver', {
+                      get: () => undefined
+                    })
+                  """
+            })
+            
             logging.info("Selenium WebDriver가 성공적으로 초기화되었습니다.")
         except Exception as e:
             logging.error(f"Selenium WebDriver 초기화 중 오류 발생: {e}")
@@ -88,10 +103,9 @@ class DataCollector:
             self.driver.get(base_url)
             
             wait = WebDriverWait(self.driver, 20)
-            # [핵심] id가 'search_project_list'인 div 태그가 나타날 때까지 기다림
             wait.until(EC.presence_of_element_located((By.ID, "search_project_list")))
             
-            time.sleep(1) # 동적 콘텐츠가 완전히 렌더링될 시간을 추가로 줌
+            time.sleep(1) 
 
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
@@ -131,7 +145,6 @@ class DataCollector:
             return projects
         except Exception as e:
             logging.error(f"NTIS 목록 스크래핑 중 오류 발생: {e}")
-            # [핵심] 오류 발생 시점의 HTML을 파일로 저장하여 디버깅
             try:
                 with open("error_page.html", "w", encoding="utf-8") as f:
                     f.write(self.driver.page_source)
@@ -139,7 +152,6 @@ class DataCollector:
             except Exception as e_save:
                 logging.error(f"오류 페이지 저장 실패: {e_save}")
             
-            # 스택 트레이스도 로그 파일에 기록
             with open("error.log", "a", encoding="utf-8") as f:
                 f.write(f"\n--- Collector Error ---\n")
                 f.write(traceback.format_exc())
