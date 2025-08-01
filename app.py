@@ -5,8 +5,6 @@ from collector import DataCollector
 from analyzer import ContextAnalyzer
 from generator import ProposalGenerator
 
-# --- 페이지 설정 ---
-# 웹페이지의 제목, 아이콘, 레이아웃을 설정합니다.
 st.set_page_config(
     page_title="🤖 지능형 연구과제 제안서 생성기",
     page_icon="🤖",
@@ -14,8 +12,6 @@ st.set_page_config(
 )
 
 # --- 모델 및 클래스 로딩 ---
-# @st.cache_resource 데코레이터를 사용하여 모델과 클래스를 캐싱합니다.
-# 이렇게 하면 앱이 재실행될 때마다 무거운 모델을 다시 로드하는 것을 방지하여 속도를 높입니다.
 @st.cache_resource
 def load_models():
     """필요한 모든 클래스 인스턴스를 초기화하고 로드합니다."""
@@ -34,22 +30,19 @@ try:
     st.markdown("아이디어를 입력하면 AI가 최신 정부 R&D 트렌드를 분석하여 과제 제안서 초안을 생성합니다.")
     st.markdown("---")
 
-    # st.form을 사용하여 여러 입력 위젯을 그룹화하고, '제출' 버튼을 한 번만 누르도록 함
     with st.form("proposal_form"):
         user_topic = st.text_input(
             "**1. 연구 주제 또는 핵심 아이디어를 입력하세요:**",
             placeholder="예: 생성형 AI를 활용한 개인 맞춤형 교육 콘텐츠 자동 생성 플랫폼"
         )
         
-        # 컬럼을 사용해 UI를 깔끔하게 정렬
         col1, col2 = st.columns(2)
         with col1:
             source = st.selectbox("**2. 분석할 정보 소스를 선택하세요:**", ("ntis",)) # 현재는 ntis만 지원
         with col2:
             # 분석할 관련 과제 수를 사용자가 선택할 수 있도록 슬라이더 추가
-            context_count = st.slider("**3. 참고할 관련 과제 수:**", min_value=3, max_value=10, value=5)
+            context_count = st.slider("**3. 참고할 관련 과제 수:**", min_value=3, max_value=15, value=5)
 
-        # 폼 제출 버튼
         submitted = st.form_submit_button("🚀 제안서 생성 시작하기")
 
     # 제출 버튼이 눌리고, 사용자 주제가 입력되었을 경우에만 아래 로직 실행
