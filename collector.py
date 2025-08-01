@@ -1,4 +1,4 @@
-# collector.py (Deep Content Analysis Version - Selenium Final)
+# collector.py (Deep Content Analysis Version - Selenium Final Robust)
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -12,7 +12,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+# [수정] webdriver-manager는 더 이상 사용하지 않습니다.
+# from webdriver_manager.chrome import ChromeDriverManager
 import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class DataCollector:
     """
     Selenium을 사용하여 JavaScript로 동적 로딩되는 웹사이트의
-    상세 내용 및 PDF까지 분석하여 정보를 수집하는 클래스.
+    상세 내용 및 PDF까지 분석하여 정보를 수집하는 클래스. (최종 안정화 버전)
     """
     def __init__(self):
         self.sources = {'ntis': self._scrape_ntis}
@@ -33,13 +34,19 @@ class DataCollector:
             options.add_argument('--headless')  # 브라우저 창을 띄우지 않고 백그라운드에서 실행
             options.add_argument('--log-level=3') # 콘솔 로그 최소화
             options.add_argument("window-size=1920x1080")
+            options.add_argument("--disable-gpu") # 일부 시스템에서 headless 모드 충돌 방지
+            options.add_argument("--no-sandbox") # 일부 시스템에서 권한 문제 방지
+            options.add_argument("--disable-dev-shm-usage") # 메모리 부족 문제 방지
             options.add_experimental_option('excludeSwitches', ['enable-logging'])
             
-            # webdriver-manager가 자동으로 chromedriver를 설치 및 관리
-            self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            # [수정] Selenium 4.6 이상부터는 Selenium Manager가 내장되어 있어
+            # Service()만 호출해도 자동으로 드라이버를 관리해 줍니다.
+            # webdriver-manager를 사용하는 것보다 훨씬 안정적입니다.
+            self.driver = webdriver.Chrome(service=Service(), options=options)
             logging.info("Selenium WebDriver가 성공적으로 초기화되었습니다.")
         except Exception as e:
             logging.error(f"Selenium WebDriver 초기화 중 오류 발생: {e}")
+            logging.error("Chrome 브라우저가 설치되어 있는지, 최신 버전인지 확인해주세요.")
             self.driver = None
 
     def __del__(self):
