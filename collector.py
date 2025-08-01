@@ -1,4 +1,4 @@
-# collector.py (Deep Content Analysis Version - Selenium Final Robust)
+# collector.py (Deep Content Analysis Version - Selenium Final Debugging)
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -12,8 +12,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-# [수정] webdriver-manager는 더 이상 사용하지 않습니다.
-# from webdriver_manager.chrome import ChromeDriverManager
 import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class DataCollector:
     """
     Selenium을 사용하여 JavaScript로 동적 로딩되는 웹사이트의
-    상세 내용 및 PDF까지 분석하여 정보를 수집하는 클래스. (최종 안정화 버전)
+    상세 내용 및 PDF까지 분석하여 정보를 수집하는 클래스. (최종 안정화 및 디버깅 버전)
     """
     def __init__(self):
         self.sources = {'ntis': self._scrape_ntis}
@@ -31,17 +29,15 @@ class DataCollector:
         # Selenium WebDriver 설정
         try:
             options = webdriver.ChromeOptions()
-            options.add_argument('--headless')  # 브라우저 창을 띄우지 않고 백그라운드에서 실행
-            options.add_argument('--log-level=3') # 콘솔 로그 최소화
+            # [수정] 디버깅을 위해 헤드리스 모드를 비활성화합니다. 실행 시 크롬 창이 뜹니다.
+            # options.add_argument('--headless') 
+            options.add_argument('--log-level=3')
             options.add_argument("window-size=1920x1080")
-            options.add_argument("--disable-gpu") # 일부 시스템에서 headless 모드 충돌 방지
-            options.add_argument("--no-sandbox") # 일부 시스템에서 권한 문제 방지
-            options.add_argument("--disable-dev-shm-usage") # 메모리 부족 문제 방지
+            options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
             options.add_experimental_option('excludeSwitches', ['enable-logging'])
             
-            # [수정] Selenium 4.6 이상부터는 Selenium Manager가 내장되어 있어
-            # Service()만 호출해도 자동으로 드라이버를 관리해 줍니다.
-            # webdriver-manager를 사용하는 것보다 훨씬 안정적입니다.
             self.driver = webdriver.Chrome(service=Service(), options=options)
             logging.info("Selenium WebDriver가 성공적으로 초기화되었습니다.")
         except Exception as e:
@@ -78,7 +74,6 @@ class DataCollector:
             return ""
 
     def _scrape_detail_page(self, detail_url: str) -> str:
-        # 상세 페이지는 requests로도 충분할 수 있으므로 그대로 사용
         try:
             response = requests.get(detail_url, headers=self.headers, timeout=10)
             response.raise_for_status()
@@ -98,11 +93,12 @@ class DataCollector:
         try:
             self.driver.get(base_url)
             
-            # [핵심] JavaScript가 컨텐츠를 로드할 때까지 최대 20초간 기다림
+            # [추가] 페이지가 완전히 로드될 시간을 조금 더 줍니다.
+            time.sleep(2)
+            
             wait = WebDriverWait(self.driver, 20)
             wait.until(EC.presence_of_element_located((By.ID, "search_project_list")))
             
-            # 페이지 소스를 BeautifulSoup으로 파싱
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             
             list_container = soup.find('div', id='search_project_list')
@@ -123,7 +119,6 @@ class DataCollector:
                 if not title_tag: continue
                 
                 title = title_tag.text.strip()
-                # Selenium은 href 속성을 가져오기 위해 get_attribute 사용
                 detail_url = "https://www.ntis.go.kr" + title_tag.get_attribute('href')
                 
                 details = item.select("dl > dd")
@@ -132,7 +127,6 @@ class DataCollector:
                 period = details[2].text.strip() if len(details) > 2 else "N/A"
 
                 logging.info(f"({i+1}/{limit}) '{title}' 과제의 상세 내용을 분석합니다...")
-                # 상세 페이지 분석은 기존 requests를 활용해도 무방
                 summary_text = self._scrape_detail_page(detail_url)
                 
                 projects.append({
