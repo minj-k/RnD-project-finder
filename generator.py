@@ -34,17 +34,16 @@ class ProposalGenerator:
             return f"오류: LLM API 호출에 실패했습니다. ({e})"
 
     def _format_context(self, ranked_context: List[Dict[str, str]]) -> str:
-        """LLM에게 제공할 컨텍스트 문자열을 포맷팅합니다."""
         context_lines = []
         for p in ranked_context:
+            summary_preview = (p.get('summary', 'N/A')[:200] + '...') if p.get('summary') else 'N/A'
             line = (
                 f"- 제목: {p.get('title', 'N/A')}\n"
-                f"  (소관부처: {p.get('agency', 'N/A')}, "
-                f"공고기관: {p.get('department', 'N/A')}, "
-                f"마감일: {p.get('end_date', 'N/A')})"
+                f"  (기관: {p.get('department', 'N/A')}, 마감일: {p.get('end_date', 'N/A')})\n"
+                f"  주요 내용: {summary_preview}"
             )
             context_lines.append(line)
-        return "\n".join(context_lines)
+        return "\n\n".join(context_lines)
 
     def generate_full_proposal(self, user_topic: str, ranked_context: List[Dict[str, str]]) -> str:
         """다단계 프롬프트를 통해 완전한 제안서를 생성합니다."""
