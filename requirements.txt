@@ -1,15 +1,9 @@
-# Data Collection & Web
+# requirements.txt
 requests
 beautifulsoup4
-
-# NLP & Analysis
 sentence-transformers
 scikit-learn
 numpy
-
-# LLM & Environment
 google-generativeai
 python-dotenv
-
-# Web Application
-streamlit
+PySide6
