@@ -8,3 +8,5 @@ google-generativeai
 python-dotenv
 PySide6
 pypdf
+selenium
+webdriver-manager
