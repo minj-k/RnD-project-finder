@@ -29,10 +29,6 @@ class DataCollector:
         self.driver = None
         try:
             options = webdriver.ChromeOptions()
-            # [수정] 디버깅을 위해 헤드리스 모드는 계속 비활성화합니다.
-            # options.add_argument('--headless') 
-            
-            # --- 안정성 강화를 위한 옵션 총동원 ---
             options.add_argument("window-size=1920,1080")
             options.add_argument("--log-level=3")
             options.add_argument("--no-sandbox")
