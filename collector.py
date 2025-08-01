@@ -1,29 +1,57 @@
-# collector.py (Final Version - Direct API Call)
+# collector.py (Final Version - Selenium with Debug Logging)
 import requests
+from bs4 import BeautifulSoup
 import logging
 from typing import List, Dict, Optional
 import io
 from pypdf import PdfReader
 
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
+import traceback
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DataCollector:
     """
-    NTIS의 내부 API를 직접 호출하여 안정적으로 과제 정보를 수집하는 클래스.
-    Selenium을 사용하지 않아 훨씬 빠르고 안정적입니다.
+    Selenium을 사용하여 동적 웹사이트의 정보를 수집하는 최종 안정화 버전.
+    오류 발생 시 디버깅을 위한 HTML 페이지 저장 기능이 포함되어 있습니다.
     """
     def __init__(self):
-        self.sources = {'ntis': self._call_ntis_api}
+        self.sources = {'ntis': self._scrape_ntis}
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://www.ntis.go.kr/ThSearchProjectList.do' # 요청 출처를 명시하여 차단을 피함
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        self.driver = None
+        try:
+            options = webdriver.ChromeOptions()
+            # 디버깅을 위해 헤드리스 모드는 비활성화 (실행 시 크롬 창이 보임)
+            # options.add_argument('--headless') 
+            options.add_argument("window-size=1920,1080")
+            options.add_argument("--log-level=3")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            
+            self.driver = webdriver.Chrome(service=Service(), options=options)
+            logging.info("Selenium WebDriver가 성공적으로 초기화되었습니다.")
+        except Exception as e:
+            logging.error(f"Selenium WebDriver 초기화 중 오류 발생: {e}")
+            logging.error("Chrome 브라우저가 설치되어 있는지, 최신 버전인지 확인해주세요.")
+            self.driver = None
+
+    def __del__(self):
+        if self.driver:
+            self.driver.quit()
 
     def collect(self, source: str = 'ntis', limit: int = 10) -> Optional[List[Dict[str, str]]]:
-        if source not in self.sources:
-            logging.error(f"지원하지 않는 소스입니다: {source}")
+        if not self.driver:
             return None
-        logging.info(f"'{source}' 내부 API를 직접 호출하여 데이터 수집을 시작합니다...")
         return self.sources[source](limit)
 
     def _extract_text_from_pdf(self, pdf_url: str) -> str:
@@ -53,51 +81,67 @@ class DataCollector:
             logging.warning(f"상세 페이지({detail_url}) 분석 중 오류: {e}")
             return ""
 
-    def _call_ntis_api(self, limit: int) -> Optional[List[Dict[str, str]]]:
-        # NTIS 과제 목록을 가져오는 내부 API의 실제 주소
-        api_url = "https://www.ntis.go.kr/ThProjectListAjax.do"
-        
-        # API에 POST 방식으로 보낼 데이터
-        payload = {
-            'searchWord': '연구',
-            'sort': 'SS04/DESC',
-            'pageUnit': limit,
-            'pageIndex': 1
-        }
+    def _scrape_ntis(self, limit: int) -> Optional[List[Dict[str, str]]]:
+        base_url = f"https://www.ntis.go.kr/ThSearchProjectList.do?searchWord=연구&sort=SS04/DESC"
         
         try:
-            # POST 요청으로 API 호출
-            response = requests.post(api_url, data=payload, headers=self.headers, timeout=15)
-            response.raise_for_status()
+            self.driver.get(base_url)
             
-            # 응답은 JSON 형식이므로, .json()으로 파싱
-            data = response.json()
+            wait = WebDriverWait(self.driver, 20)
+            # [핵심] id가 'search_project_list'인 div 태그가 나타날 때까지 기다림
+            wait.until(EC.presence_of_element_located((By.ID, "search_project_list")))
             
+            time.sleep(1) # 동적 콘텐츠가 완전히 렌더링될 시간을 추가로 줌
+
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            
+            list_container = soup.find('div', id='search_project_list')
+            if not list_container:
+                raise Exception("과제 목록 컨테이너('search_project_list')를 찾을 수 없습니다.")
+
+            items = list_container.find_all('li')
+            if not items:
+                raise Exception("과제 항목(li)을 찾을 수 없습니다.")
+
             projects = []
-            # 'projectList' 키에 실제 과제 목록이 들어있음
-            for item in data.get('projectList', []):
-                # 상세 페이지 URL 조합
-                detail_url = f"https://www.ntis.go.kr/ThMain.do?menuNo=2021&p_prj_no={item.get('prjNo')}"
+            for i, item in enumerate(items):
+                if i >= limit: break
+
+                title_tag = item.select_one("div.title > a")
+                if not title_tag: continue
                 
-                logging.info(f"'{item.get('koPrjNm')}' 과제의 상세 내용을 분석합니다...")
+                title = title_tag.text.strip()
+                detail_url = "https://www.ntis.go.kr" + title_tag.get_attribute('href')
+                
+                details = item.select("dl > dd")
+                agency = details[0].text.strip() if len(details) > 0 else "N/A"
+                department = details[1].text.strip() if len(details) > 1 else "N/A"
+                period = details[2].text.strip() if len(details) > 2 else "N/A"
+
+                logging.info(f"({i+1}/{limit}) '{title}' 과제의 상세 내용을 분석합니다...")
                 summary_text = self._scrape_detail_page(detail_url)
                 
                 projects.append({
-                    "title": item.get('koPrjNm', 'N/A'),
-                    "agency": item.get('leadRsrhOrgNm', 'N/A'),
-                    "department": item.get('mngRsrhOrgNm', 'N/A'),
-                    "end_date": item.get('prjTerm', 'N/A').split('~')[-1].strip(),
-                    "url": detail_url,
-                    "summary": summary_text,
-                    "source": "NTIS Internal API"
+                    "title": title, "agency": agency, "department": department,
+                    "end_date": period.split('~')[-1].strip() if '~' in period else period,
+                    "url": detail_url, "summary": summary_text, "source": "NTIS Selenium Scraper"
                 })
             
-            logging.info(f"NTIS 내부 API 호출로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
+            logging.info(f"NTIS Selenium 크롤링으로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
             return projects
-        except requests.RequestException as e:
-            logging.error(f"NTIS API 요청 중 오류 발생: {e}")
-            return None
         except Exception as e:
-            logging.error(f"데이터 처리 중 오류 발생: {e}")
-            return None
+            logging.error(f"NTIS 목록 스크래핑 중 오류 발생: {e}")
+            # [핵심] 오류 발생 시점의 HTML을 파일로 저장하여 디버깅
+            try:
+                with open("error_page.html", "w", encoding="utf-8") as f:
+                    f.write(self.driver.page_source)
+                logging.info("오류 발생 시점의 화면을 'error_page.html' 파일로 저장했습니다.")
+            except Exception as e_save:
+                logging.error(f"오류 페이지 저장 실패: {e_save}")
+            
+            # 스택 트레이스도 로그 파일에 기록
+            with open("error.log", "a", encoding="utf-8") as f:
+                f.write(f"\n--- Collector Error ---\n")
+                f.write(traceback.format_exc())
 
+            return None
