@@ -42,7 +42,7 @@ class ContextAnalyzer:
         
         # 분석을 위해 '제목'과 '공고기관'을 합친 텍스트 생성
         # 예: "인공지능 기반 신약 개발 (한국연구재단)"
-        context_texts = [f"{p.get('title', '')} ({p.get('department', '')})" for p in projects]
+        context_texts = [f"제목: {p.get('title', '')}\n내용: {p.get('summary', '')}" for p in projects]
         
         # 사용자 주제와 과제 텍스트들을 벡터로 변환 (임베딩)
         topic_embedding = self.model.encode(user_topic, convert_to_tensor=True)
