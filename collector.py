@@ -1,4 +1,4 @@
-# collector.py (Final Version - Direct API Call with Spoofing)
+# collector.py (Final Version - Session-Based API Call)
 import requests
 import logging
 from typing import List, Dict, Optional
@@ -10,28 +10,28 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 class DataCollector:
     """
-    NTIS의 내부 API를 '진짜 브라우저'처럼 위장하여 직접 호출함으로써,
-    Selenium 없이 가장 빠르고 안정적으로 과제 정보를 수집하는 클래스.
+    requests.Session 객체를 사용하여 쿠키를 유지함으로써, 서버 차단을 우회하고
+    안정적으로 내부 API를 호출하는 최종 버전의 클래스.
     """
     def __init__(self):
-        self.sources = {'ntis': self._call_ntis_api}
-        # [핵심] 실제 브라우저가 보내는 것과 유사한 헤더 설정
-        self.headers = {
+        self.sources = {'ntis': self._call_ntis_api_with_session}
+        self.session = requests.Session() # [핵심] 세션 객체 생성
+        # [핵심] 세션 전체에 적용될 헤더 설정
+        self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://www.ntis.go.kr/ThSearchProjectList.do', # 이 페이지에서 요청이 시작된 것처럼 위장
-            'X-Requested-With': 'XMLHttpRequest', # AJAX 요청임을 명시
-        }
+        })
 
     def collect(self, source: str = 'ntis', limit: int = 10) -> Optional[List[Dict[str, str]]]:
         if source not in self.sources:
             logging.error(f"지원하지 않는 소스입니다: {source}")
             return None
-        logging.info(f"'{source}' 내부 API를 직접 호출하여 데이터 수집을 시작합니다...")
+        logging.info(f"'{source}' 세션 기반 API 호출로 데이터 수집을 시작합니다...")
         return self.sources[source](limit)
 
     def _extract_text_from_pdf(self, pdf_url: str) -> str:
         try:
-            response = requests.get(pdf_url, headers=self.headers, timeout=20)
+            # PDF 다운로드 시에도 동일한 세션 사용
+            response = self.session.get(pdf_url, timeout=20)
             response.raise_for_status()
             pdf_file = io.BytesIO(response.content)
             reader = PdfReader(pdf_file)
@@ -44,7 +44,8 @@ class DataCollector:
 
     def _scrape_detail_page(self, detail_url: str) -> str:
         try:
-            response = requests.get(detail_url, headers=self.headers, timeout=10)
+            # 상세 페이지 접속 시에도 동일한 세션 사용
+            response = self.session.get(detail_url, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             file_link_tag = soup.find('a', title='첨부파일 다운로드', href=lambda href: href and href.endswith('.pdf'))
@@ -56,8 +57,10 @@ class DataCollector:
             logging.warning(f"상세 페이지({detail_url}) 분석 중 오류: {e}")
             return ""
 
-    def _call_ntis_api(self, limit: int) -> Optional[List[Dict[str, str]]]:
+    def _call_ntis_api_with_session(self, limit: int) -> Optional[List[Dict[str, str]]]:
+        main_page_url = "https://www.ntis.go.kr/ThSearchProjectList.do"
         api_url = "https://www.ntis.go.kr/ThProjectListAjax.do"
+        
         payload = {
             'searchWord': '연구',
             'sort': 'SS04/DESC',
@@ -66,27 +69,27 @@ class DataCollector:
         }
         
         try:
-            response = requests.post(api_url, data=payload, headers=self.headers, timeout=15)
+            # 1단계: 메인 페이지에 먼저 접속하여 세션 쿠키를 받음
+            logging.info("서버로부터 세션 쿠키를 얻기 위해 메인 페이지에 접속합니다...")
+            self.session.get(main_page_url, timeout=15)
+            
+            # 2단계: 발급받은 쿠키가 포함된 세션으로 API에 POST 요청
+            logging.info("세션 쿠키를 사용하여 내부 API를 호출합니다...")
+            # 헤더에 Referer와 X-Requested-With를 추가하여 AJAX 요청처럼 위장
+            api_headers = {
+                'Referer': main_page_url,
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+            response = self.session.post(api_url, data=payload, headers=api_headers, timeout=15)
             response.raise_for_status()
             
-            # [핵심] JSON 파싱 시도 및 실패 시 상세 내용 로깅
-            try:
-                data = response.json()
-            except requests.exceptions.JSONDecodeError:
-                logging.error("서버가 JSON이 아닌 응답을 반환했습니다 (서버 차단 가능성 높음).")
-                logging.error(f"서버 응답 내용:\n{response.text[:500]}") # 응답 내용의 일부를 보여줌
-                # 오류 발생 시 HTML 파일로 저장하여 원인 파악
-                with open("api_error_response.html", "w", encoding="utf-8") as f:
-                    f.write(response.text)
-                logging.info("'api_error_response.html' 파일에 서버의 실제 응답을 저장했습니다.")
-                return None
+            data = response.json()
 
             projects = []
             for item in data.get('projectList', []):
                 detail_url = f"https://www.ntis.go.kr/ThMain.do?menuNo=2021&p_prj_no={item.get('prjNo')}"
                 
                 logging.info(f"'{item.get('koPrjNm')}' 과제의 상세 내용을 분석합니다...")
-                # 상세 페이지 분석은 PDF 다운로드를 위해 그대로 둡니다.
                 summary_text = self._scrape_detail_page(detail_url)
                 
                 projects.append({
@@ -96,11 +99,15 @@ class DataCollector:
                     "end_date": item.get('prjTerm', 'N/A').split('~')[-1].strip(),
                     "url": detail_url,
                     "summary": summary_text,
-                    "source": "NTIS Internal API"
+                    "source": "NTIS Internal API (Session)"
                 })
             
             logging.info(f"NTIS 내부 API 호출로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
             return projects
+        except requests.exceptions.JSONDecodeError:
+            logging.error("서버가 JSON이 아닌 응답을 반환했습니다. 서버 정책이 변경되었을 수 있습니다.")
+            logging.error(f"서버 응답 내용:\n{response.text[:500]}")
+            return None
         except requests.RequestException as e:
             logging.error(f"NTIS API 요청 중 네트워크 오류 발생: {e}")
             return None
