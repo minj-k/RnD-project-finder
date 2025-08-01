@@ -1,4 +1,4 @@
-# collector.py (Deep Content Analysis Version - Final Robust)
+# collector.py (Deep Content Analysis Version - Selenium Final)
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -6,28 +6,58 @@ from typing import List, Dict, Optional
 import io
 from pypdf import PdfReader
 
+# Selenium 관련 라이브러리 임포트
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
+import time
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DataCollector:
     """
-    상세 페이지 및 첨부 PDF 파일의 내용까지 분석하여
-    심층적인 과제 정보를 수집하는 클래스. (최종 안정화 버전)
+    Selenium을 사용하여 JavaScript로 동적 로딩되는 웹사이트의
+    상세 내용 및 PDF까지 분석하여 정보를 수집하는 클래스.
     """
     def __init__(self):
         self.sources = {'ntis': self._scrape_ntis}
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
+        # Selenium WebDriver 설정
+        try:
+            options = webdriver.ChromeOptions()
+            options.add_argument('--headless')  # 브라우저 창을 띄우지 않고 백그라운드에서 실행
+            options.add_argument('--log-level=3') # 콘솔 로그 최소화
+            options.add_argument("window-size=1920x1080")
+            options.add_experimental_option('excludeSwitches', ['enable-logging'])
+            
+            # webdriver-manager가 자동으로 chromedriver를 설치 및 관리
+            self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+            logging.info("Selenium WebDriver가 성공적으로 초기화되었습니다.")
+        except Exception as e:
+            logging.error(f"Selenium WebDriver 초기화 중 오류 발생: {e}")
+            self.driver = None
+
+    def __del__(self):
+        """클래스 소멸 시 브라우저 종료"""
+        if self.driver:
+            self.driver.quit()
 
     def collect(self, source: str = 'ntis', limit: int = 10) -> Optional[List[Dict[str, str]]]:
+        if not self.driver:
+            logging.error("WebDriver가 초기화되지 않아 수집을 진행할 수 없습니다.")
+            return None
         if source not in self.sources:
             logging.error(f"지원하지 않는 소스입니다: {source}")
             return None
-        logging.info(f"'{source}'에서 심층 분석을 위한 웹 크롤링을 시작합니다...")
+        logging.info(f"'{source}'에서 Selenium을 이용한 심층 분석을 시작합니다...")
         return self.sources[source](limit)
 
     def _extract_text_from_pdf(self, pdf_url: str) -> str:
-        """PDF URL을 받아 텍스트를 추출합니다."""
         try:
             response = requests.get(pdf_url, headers=self.headers, timeout=20)
             response.raise_for_status()
@@ -41,52 +71,38 @@ class DataCollector:
             return ""
 
     def _scrape_detail_page(self, detail_url: str) -> str:
-        """상세 페이지에서 PDF 링크를 찾아 텍스트를 추출합니다."""
+        # 상세 페이지는 requests로도 충분할 수 있으므로 그대로 사용
         try:
             response = requests.get(detail_url, headers=self.headers, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
-
-            # '첨부파일' 텍스트를 포함하는 링크를 직접 찾음 (더 안정적)
-            file_link_tag = soup.find('a', title='첨부파일 다운로드', href=lambda href: href and (href.endswith('.pdf') or href.endswith('.hwp')))
-            
-            if not file_link_tag:
-                 # 백업: '제안요청서' 텍스트를 포함하는 링크 찾기
-                file_link_tag = soup.find('a', title='첨부파일 다운로드', string=lambda text: text and '제안요청서' in text)
-            
-            if file_link_tag and file_link_tag['href'].endswith('.pdf'):
+            file_link_tag = soup.find('a', title='첨부파일 다운로드', href=lambda href: href and href.endswith('.pdf'))
+            if file_link_tag:
                 pdf_url = "https://www.ntis.go.kr" + file_link_tag['href']
                 return self._extract_text_from_pdf(pdf_url)
-            else:
-                logging.warning(f"상세 페이지({detail_url})에서 분석 가능한 PDF 첨부파일을 찾지 못했습니다.")
-                return ""
+            return ""
         except Exception as e:
-            logging.error(f"상세 페이지 스크래핑 중 오류: {e}")
+            logging.warning(f"상세 페이지({detail_url}) 분석 중 오류: {e}")
             return ""
 
     def _scrape_ntis(self, limit: int) -> Optional[List[Dict[str, str]]]:
-        # [수정] 동적으로 변하는 페이지 대신, 검색 결과 페이지를 타겟으로 변경
-        # '연구'라는 키워드로 검색하여 가장 일반적인 목록을 가져옴
-        base_url = f"https://www.ntis.go.kr/ThSearchProjectList.do"
-        params = {
-            'searchWord': '연구',
-            'pageUnit': limit,
-            'sort': 'SS04/DESC' # 최신순 정렬
-        }
+        base_url = f"https://www.ntis.go.kr/ThSearchProjectList.do?searchWord=연구&sort=SS04/DESC"
         
         try:
-            response = requests.get(base_url, params=params, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
+            self.driver.get(base_url)
             
-            # [수정] 훨씬 더 안정적인 선택자로 변경
-            # id가 'search_project_list'인 영역을 먼저 찾고, 그 안에서 목록을 탐색
+            # [핵심] JavaScript가 컨텐츠를 로드할 때까지 최대 20초간 기다림
+            wait = WebDriverWait(self.driver, 20)
+            wait.until(EC.presence_of_element_located((By.ID, "search_project_list")))
+            
+            # 페이지 소스를 BeautifulSoup으로 파싱
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            
             list_container = soup.find('div', id='search_project_list')
             if not list_container:
-                logging.error("과제 목록 컨테이너('search_project_list')를 찾을 수 없습니다. 사이트 구조가 변경되었습니다.")
+                logging.error("과제 목록 컨테이너('search_project_list')를 찾을 수 없습니다.")
                 return []
 
-            # 컨테이너 안의 각 과제 항목(li)을 선택
             items = list_container.find_all('li')
             if not items:
                 logging.error("과제 항목(li)을 찾을 수 없습니다.")
@@ -99,30 +115,26 @@ class DataCollector:
                 title_tag = item.select_one("div.title > a")
                 if not title_tag: continue
                 
-                # 상세 정보 추출
                 title = title_tag.text.strip()
-                detail_url = "https://www.ntis.go.kr" + title_tag['href']
+                # Selenium은 href 속성을 가져오기 위해 get_attribute 사용
+                detail_url = "https://www.ntis.go.kr" + title_tag.get_attribute('href')
                 
-                # 기관, 기간 등의 정보는 dl > dd 구조 안에 있음
                 details = item.select("dl > dd")
                 agency = details[0].text.strip() if len(details) > 0 else "N/A"
                 department = details[1].text.strip() if len(details) > 1 else "N/A"
                 period = details[2].text.strip() if len(details) > 2 else "N/A"
 
                 logging.info(f"({i+1}/{limit}) '{title}' 과제의 상세 내용을 분석합니다...")
+                # 상세 페이지 분석은 기존 requests를 활용해도 무방
                 summary_text = self._scrape_detail_page(detail_url)
                 
                 projects.append({
-                    "title": title,
-                    "agency": agency,
-                    "department": department,
-                    "end_date": period.split('~')[-1].strip() if '~' in period else period, # 기간에서 마감일만 추출
-                    "url": detail_url,
-                    "summary": summary_text,
-                    "source": "NTIS Search Scraper"
+                    "title": title, "agency": agency, "department": department,
+                    "end_date": period.split('~')[-1].strip() if '~' in period else period,
+                    "url": detail_url, "summary": summary_text, "source": "NTIS Selenium Scraper"
                 })
             
-            logging.info(f"NTIS 검색 결과 크롤링으로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
+            logging.info(f"NTIS Selenium 크롤링으로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
             return projects
         except Exception as e:
             logging.error(f"NTIS 목록 스크래핑 중 오류 발생: {e}")
