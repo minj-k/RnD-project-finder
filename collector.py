@@ -1,100 +1,105 @@
-# collector.py (Web Scraping Version)
+# collector.py (Web Scraping - Detailed Version)
 import requests
 from bs4 import BeautifulSoup
 import logging
 from typing import List, Dict, Optional
 
-# 로깅 설정: 어떤 일이 일어나고 있는지 터미널에 표시
+# 로깅 설정: 스크립트 실행 과정을 터미널에 출력하여 디버깅에 용이하게 함
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class DataCollector:
     """
-    API 없이 웹 크롤링(스크래핑)을 통해 연구과제 정보를 수집하는 클래스.
+    API 없이 NTIS 웹사이트를 직접 크롤링하여 연구과제 정보를 수집하는 클래스.
+    제공된 URL 구조에 맞춰 상세 정보를 추출합니다.
     """
     def __init__(self):
-        # 각 사이트별 크롤링 함수를 딕셔너리로 관리하여 확장성을 높임
+        # 다른 정보 소스를 추가할 경우를 대비한 딕셔너리 구조
         self.sources = {
             'ntis': self._scrape_ntis,
-            # 'keit': self._scrape_keit, # 다른 사이트 추가 가능
         }
 
-    def collect(self, source: str, keyword: str, limit: int = 10) -> Optional[List[Dict[str, str]]]:
-        """지정된 소스에서 키워드 관련 과제 정보를 수집합니다."""
+    def collect(self, source: str = 'ntis', limit: int = 20) -> Optional[List[Dict[str, str]]]:
+        """
+        지정된 소스에서 과제 정보를 수집합니다.
+        
+        Args:
+            source (str): 정보 소스 (기본값: 'ntis').
+            limit (int): 수집할 최대 과제 수.
+        
+        Returns:
+            Optional[List[Dict[str, str]]]: 수집된 과제 정보 리스트. 실패 시 None.
+        """
         if source not in self.sources:
             logging.error(f"지원하지 않는 소스입니다: {source}")
             return None
         
-        logging.info(f"'{source}'에서 키워드 '{keyword}'로 웹 크롤링을 시작합니다...")
-        return self.sources[source](keyword, limit)
+        logging.info(f"'{source}'에서 웹 크롤링을 시작합니다...")
+        return self.sources[source](limit)
 
-    def _scrape_ntis(self, keyword: str, limit: int) -> Optional[List[Dict[str, str]]]:
+    def _scrape_ntis(self, limit: int) -> Optional[List[Dict[str, str]]]:
         """
-        NTIS 통합공고 게시판을 스크래핑하여 과제 목록을 가져옵니다.
+        NTIS 국가R&D통합공고 페이지를 스크래핑하여 상세 과제 정보를 추출합니다.
         """
-        # NTIS 통합공고 검색 URL
-        base_url = "https://www.ntis.go.kr/ThSearchAnnouncementList.do"
+        # 사용자가 제공한 '최근 1개월' 공고 링크
+        # pageUnit 파라미터를 추가하여 한 페이지에 가져올 공고 수를 조절
+        base_url = f"https://www.ntis.go.kr/rndgate/eg/un/ra/mng.do?searchCondition=1m&pageUnit={limit}"
         
-        # 웹사이트에 보낼 요청 파라미터 (검색어, 한 페이지에 표시할 개수 등)
-        params = {
-            'p_menu_id': '080201',
-            'searchWord': keyword,
-            'pageUnit': limit,
-            'pageIndex': 1 # 첫 번째 페이지만 가져옴
-        }
-        
-        # 서버가 실제 브라우저의 요청으로 인식하도록 헤더 설정
+        # 실제 브라우저처럼 보이게 하기 위한 User-Agent 헤더
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
 
         try:
-            # GET 요청으로 웹페이지의 HTML 소스 코드를 가져옴
-            response = requests.get(base_url, params=params, headers=headers, timeout=10)
-            response.raise_for_status() # HTTP 오류 발생 시 예외 처리
+            # 웹페이지 HTML 요청 및 수신
+            response = requests.get(base_url, headers=headers, timeout=10)
+            response.raise_for_status()  # HTTP 요청 실패 시 예외 발생
 
-            # BeautifulSoup을 사용하여 HTML 코드를 파싱할 수 있는 객체로 변환
+            # BeautifulSoup으로 HTML 파싱
             soup = BeautifulSoup(response.text, 'html.parser')
             
             projects = []
             
-            # ⚠️ 가장 중요하고 취약한 부분:
-            # 개발자 도구(F12)로 확인한 HTML 구조를 기반으로 데이터를 포함하는 태그를 선택합니다.
-            # 예: 공고 목록이 담긴 테이블의 각 행(tr)을 선택
-            rows = soup.select("div.board_list_style1 > table > tbody > tr")
+            # ⚠️ 가장 중요한 CSS 선택자 부분
+            # 공고 목록이 담긴 테이블의 각 행(tr)을 선택합니다.
+            # 클래스 이름에 공백이 포함된 경우, 점(.)으로 연결하여 선택합니다. (예: .board_list.type_list)
+            rows = soup.select("div.board_list_style1 > table.type_list > tbody > tr")
             
             if not rows:
                 logging.warning("공고 목록을 찾을 수 없습니다. NTIS 웹사이트의 HTML 구조가 변경되었을 수 있습니다.")
                 return []
 
             for row in rows:
-                # 각 행(row) 안에서 세부 정보(제목, 기관 등)를 CSS 선택자로 찾음
-                # 이 선택자들은 브라우저의 '개발자 도구' -> 'Elements' 탭에서 찾을 수 있습니다.
-                title_tag = row.select_one("td.subject a")
-                agency_tag = row.select_one("td:nth-of-type(3)") # 3번째 td 태그
-                department_tag = row.select_one("td:nth-of-type(4)") # 4번째 td 태그
-                date_tag = row.select_one("td:nth-of-type(6)") # 6번째 td 태그
+                # 각 행(row) 내부의 셀(td)들을 리스트로 가져옴
+                cells = row.find_all('td')
+                
+                # 셀 개수가 충분한지 확인하여 오류 방지
+                if len(cells) < 7:
+                    continue
 
-                if title_tag:
-                    # 태그 안의 텍스트만 추출하고, 불필요한 공백을 제거
-                    title = title_tag.text.strip()
-                    # 상세 페이지 링크(href 속성) 추출
-                    detail_url = "https://www.ntis.go.kr" + title_tag['href']
-                    
-                    # 태그가 존재할 경우에만 텍스트 추출 (오류 방지)
-                    agency = agency_tag.text.strip() if agency_tag else "N/A"
-                    department = department_tag.text.strip() if department_tag else "N/A"
-                    date = date_tag.text.strip() if date_tag else "N/A"
+                # 각 셀에서 정보 추출
+                project_id = cells[0].text.strip()
+                title_tag = cells[1].find('a')
+                title = title_tag.text.strip() if title_tag else "N/A"
+                detail_url = "https://www.ntis.go.kr" + title_tag['href'] if title_tag else "N/A"
+                agency = cells[2].text.strip()
+                department = cells[3].text.strip()
+                status = cells[4].text.strip()
+                start_date = cells[5].text.strip()
+                end_date = cells[6].text.strip()
 
-                    projects.append({
-                        "title": title,
-                        "agency": agency,
-                        "department": department,
-                        "date": date,
-                        "url": detail_url,
-                        "source": "NTIS Web Scraping"
-                    })
+                projects.append({
+                    "id": project_id,
+                    "title": title,
+                    "agency": agency,          # 소관부처
+                    "department": department,  # 공고기관
+                    "status": status,          # 사업상태
+                    "start_date": start_date,  # 입력일
+                    "end_date": end_date,      # 마감일
+                    "url": detail_url,
+                    "source": "NTIS Web Scraping"
+                })
             
-            logging.info(f"NTIS 웹 크롤링으로 {len(projects)}개의 과제를 찾았습니다.")
+            logging.info(f"NTIS 웹 크롤링으로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
             return projects
 
         except requests.RequestException as e:
@@ -103,3 +108,16 @@ class DataCollector:
         except Exception as e:
             logging.error(f"크롤링 중 알 수 없는 오류 발생: {e}")
             return None
+
+# 이 파일이 직접 실행될 때 테스트용으로 코드를 실행
+if __name__ == '__main__':
+    collector = DataCollector()
+    # 최근 1개월 공고 중 최대 15개를 가져오는 테스트
+    ntis_projects = collector.collect(source='ntis', limit=15)
+    
+    if ntis_projects:
+        print("\n--- NTIS 과제 공고 수집 결과 ---")
+        # 수집된 첫 번째 과제 정보 상세 출력
+        import json
+        print(json.dumps(ntis_projects[0], indent=2, ensure_ascii=False))
+        print(f"\n총 {len(ntis_projects)}개의 과제를 수집했습니다.")
