@@ -1,4 +1,4 @@
-# collector.py (Deep Content Analysis Version)
+# collector.py (Deep Content Analysis Version - More Robust)
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class DataCollector:
     """
     상세 페이지 및 첨부 PDF 파일의 내용까지 분석하여
-    심층적인 과제 정보를 수집하는 클래스.
+    심층적인 과제 정보를 수집하는 클래스. (선택자 안정성 강화 버전)
     """
     def __init__(self):
         self.sources = {'ntis': self._scrape_ntis}
@@ -32,7 +32,6 @@ class DataCollector:
             response = requests.get(pdf_url, headers=self.headers, timeout=20)
             response.raise_for_status()
             
-            # 다운로드한 PDF 데이터를 메모리에서 바로 읽음
             pdf_file = io.BytesIO(response.content)
             reader = PdfReader(pdf_file)
             
@@ -41,8 +40,7 @@ class DataCollector:
                 text += page.extract_text() or ""
             
             logging.info(f"PDF에서 {len(text)} 자의 텍스트를 추출했습니다.")
-            # 너무 긴 텍스트는 요약을 위해 일부만 반환 (예: 2000자)
-            return text[:2000]
+            return text[:2000] # 너무 긴 텍스트는 일부만 반환
         except Exception as e:
             logging.error(f"PDF 처리 중 오류 발생: {e} (URL: {pdf_url})")
             return ""
@@ -54,17 +52,25 @@ class DataCollector:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            # '제안요청서' 또는 '공고문' PDF 파일 링크를 찾습니다.
-            # 이 선택자는 NTIS 사이트 구조에 따라 변경될 수 있습니다.
-            # '첨부파일' 섹션에서 '.pdf'로 끝나는 링크를 찾는 방식
+            # 1차 시도: 기존의 구체적인 선택자로 PDF 링크 찾기
             file_link_tag = soup.select_one("a.file-down[href$='.pdf']")
             
+            # 2차 시도: 1차 시도가 실패하면, '첨부파일' 텍스트를 기준으로 다시 찾기
+            if not file_link_tag:
+                logging.warning("기본 선택자로 PDF 링크를 찾지 못했습니다. 텍스트 기반으로 다시 시도합니다.")
+                # '첨부파일'이라는 텍스트를 포함하는 헤더 태그(th, strong 등)를 찾음
+                attach_header = soup.find(lambda tag: tag.name in ['th', 'strong', 'h3', 'h4'] and '첨부파일' in tag.text)
+                if attach_header:
+                    # 헤더의 부모 요소(tr) 또는 가장 가까운 컨테이너(div) 안에서 PDF 링크를 탐색
+                    parent_container = attach_header.find_parent('tr') or attach_header.find_parent('div', class_='file_list')
+                    if parent_container:
+                        file_link_tag = parent_container.select_one("a[href$='.pdf']")
+
             if file_link_tag:
-                # 상대 경로를 절대 경로로 변환
                 pdf_url = "https://www.ntis.go.kr" + file_link_tag['href']
                 return self._extract_text_from_pdf(pdf_url)
             else:
-                logging.warning("상세 페이지에서 PDF 첨부파일을 찾지 못했습니다.")
+                logging.warning(f"상세 페이지({detail_url})에서 PDF 첨부파일을 최종적으로 찾지 못했습니다.")
                 return ""
         except Exception as e:
             logging.error(f"상세 페이지 스크래핑 중 오류: {e}")
@@ -78,15 +84,23 @@ class DataCollector:
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            projects = []
-            rows = soup.select("div.board_list_style1 > table.type_list > tbody > tr")
+            # 1차 시도: 기존의 구체적인 선택자
+            primary_selector = "div.board_list_style1 > table.type_list > tbody > tr"
+            rows = soup.select(primary_selector)
             
+            # 2차 시도: 1차 시도가 실패하면, 더 일반적인 백업 선택자 사용
             if not rows:
-                logging.warning("공고 목록을 찾을 수 없습니다. NTIS 웹사이트의 HTML 구조가 변경되었을 수 있습니다.")
+                backup_selector = "table.type_list tbody tr"
+                logging.warning(f"기본 선택자 '{primary_selector}'로 목록을 찾지 못했습니다. 백업 선택자 '{backup_selector}'로 다시 시도합니다.")
+                rows = soup.select(backup_selector)
+
+            if not rows:
+                logging.error("백업 선택자로도 공고 목록을 찾을 수 없습니다. NTIS 웹사이트의 HTML 구조가 크게 변경된 것 같습니다.")
                 return []
 
+            projects = []
             for i, row in enumerate(rows):
-                if i >= limit: break # 지정된 개수만큼만 처리
+                if i >= limit: break
                 
                 cells = row.find_all('td')
                 if len(cells) < 7: continue
@@ -97,7 +111,6 @@ class DataCollector:
                 detail_url = "https://www.ntis.go.kr" + title_tag['href']
                 
                 logging.info(f"({i+1}/{limit}) '{title_tag.text.strip()}' 과제의 상세 내용을 분석합니다...")
-                # 상세 페이지에 들어가서 PDF 내용 추출
                 summary_text = self._scrape_detail_page(detail_url)
                 
                 projects.append({
@@ -106,7 +119,7 @@ class DataCollector:
                     "department": cells[3].text.strip(),
                     "end_date": cells[6].text.strip(),
                     "url": detail_url,
-                    "summary": summary_text, # 추출된 PDF 텍스트 추가
+                    "summary": summary_text,
                     "source": "NTIS Deep Scraper"
                 })
             
@@ -115,4 +128,3 @@ class DataCollector:
         except Exception as e:
             logging.error(f"NTIS 목록 스크래핑 중 오류 발생: {e}")
             return None
-
