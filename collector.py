@@ -1,147 +1,53 @@
-# collector.py (Final Version - Selenium with Maximum Stability)
+# collector.py
+
 import requests
-from bs4 import BeautifulSoup
-import logging
-from typing import List, Dict, Optional
-import io
-from pypdf import PdfReader
+import pandas as pd
+import xml.etree.ElementTree as ET
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import time
-import traceback
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-class DataCollector:
+def collect_ntis_projects(api_key, keyword, display_count=100):
     """
-    Selenium을 사용하여 동적 웹사이트의 정보를 수집하는 최종 안정화 버전.
-    안정성을 극대화하고, 오류 발생 시 디버깅을 위한 HTML 페이지 저장 기능이 포함되어 있습니다.
+    NTIS API로 과제를 검색하여 pandas DataFrame으로 반환하는 수집기 함수.
     """
-    def __init__(self):
-        self.sources = {'ntis': self._scrape_ntis}
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        self.driver = None
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument("window-size=1920,1080")
-            options.add_argument("--log-level=3")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-infobars")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-browser-side-navigation")
-            options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
-            options.add_experimental_option('useAutomationExtension', False)
-            
-            self.driver = webdriver.Chrome(service=Service(), options=options)
-            # 자동화 탐지를 피하기 위한 스크립트 실행
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": """
-                    Object.defineProperty(navigator, 'webdriver', {
-                      get: () => undefined
-                    })
-                  """
-            })
-            
-            logging.info("Selenium WebDriver가 성공적으로 초기화되었습니다.")
-        except Exception as e:
-            logging.error(f"Selenium WebDriver 초기화 중 오류 발생: {e}")
-            logging.error("Chrome 브라우저가 설치되어 있는지, 최신 버전인지 확인해주세요.")
-            self.driver = None
+    [cite_start]URL = "https://www.ntis.go.kr/rndopen/openApi/public_project" # [cite: 43]
+    params = {
+        'apprVkey': api_key,
+        'query': keyword.encode('UTF-8'),
+        'startPosition': 1,
+        'displayCnt': display_count
+    [cite_start]} # [cite: 43]
 
-    def __del__(self):
-        if self.driver:
-            self.driver.quit()
+    try:
+        response = requests.get(URL, params=params, timeout=20)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
 
-    def collect(self, source: str = 'ntis', limit: int = 10) -> Optional[List[Dict[str, str]]]:
-        if not self.driver:
-            return None
-        return self.sources[source](limit)
-
-    def _extract_text_from_pdf(self, pdf_url: str) -> str:
-        try:
-            response = requests.get(pdf_url, headers=self.headers, timeout=20)
-            response.raise_for_status()
-            pdf_file = io.BytesIO(response.content)
-            reader = PdfReader(pdf_file)
-            text = "".join(page.extract_text() or "" for page in reader.pages)
-            logging.info(f"PDF에서 {len(text)} 자의 텍스트를 추출했습니다.")
-            return text[:2000]
-        except Exception as e:
-            logging.error(f"PDF 처리 중 오류 발생: {e} (URL: {pdf_url})")
-            return ""
-
-    def _scrape_detail_page(self, detail_url: str) -> str:
-        try:
-            response = requests.get(detail_url, headers=self.headers, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            file_link_tag = soup.find('a', title='첨부파일 다운로드', href=lambda href: href and href.endswith('.pdf'))
-            if file_link_tag:
-                pdf_url = "https://www.ntis.go.kr" + file_link_tag['href']
-                return self._extract_text_from_pdf(pdf_url)
-            return ""
-        except Exception as e:
-            logging.warning(f"상세 페이지({detail_url}) 분석 중 오류: {e}")
-            return ""
-
-    def _scrape_ntis(self, limit: int) -> Optional[List[Dict[str, str]]]:
-        base_url = f"https://www.ntis.go.kr/ThSearchProjectList.do?searchWord=연구&sort=SS04/DESC"
+        project_list = []
+        for hit in root.findall('.//HIT'):
+            # [cite_start]매뉴얼을 기반으로 필요한 데이터 필드를 체계적으로 추출 [cite: 51, 52, 53, 54]
+            project_data = {
+                '과제고유번호': hit.findtext('ProjectNumber'),
+                '국문과제명': hit.findtext('./ProjectTitle/Korean'),
+                '연구책임자': hit.findtext('./Manager/Name'),
+                '과제수행기관': hit.findtext('./Resear chAgency/Name'),
+                '사업부처명': hit.findtext('./Ministry/Name'),
+                '총연구기간시작': hit.findtext('./ProjectPeriod/TotalStart'),
+                '총연구기간종료': hit.findtext('./ProjectPeriod/TotalEnd'),
+                '정부투자연구비': int(hit.findtext('GovernmentFunds', '0')), # 숫자로 변환
+                '연구목표': hit.findtext('./Goal/Full'),
+                '연구내용': hit.findtext('./Abstract/Full'),
+                '기대효과': hit.findtext('./Effect/Full'),
+                '한글키워드': hit.findtext('./Keyword/Korean')
+            }
+            project_list.append(project_data)
         
-        try:
-            self.driver.get(base_url)
-            
-            wait = WebDriverWait(self.driver, 20)
-            list_container = wait.until(EC.presence_of_element_located((By.ID, "search_project_list")))
-            
-            time.sleep(2) # 동적 콘텐츠가 완전히 렌더링될 시간을 추가로 줌
+        if not project_list:
+            return pd.DataFrame() # 결과가 없으면 빈 DataFrame 반환
 
-            items = list_container.find_elements(By.TAG_NAME, 'li')
-            if not items:
-                raise Exception("과제 항목(li)을 찾을 수 없습니다.")
+        return pd.DataFrame(project_list)
 
-            projects = []
-            for i, item in enumerate(items):
-                if i >= limit: break
-
-                title_tag = item.find_element(By.CSS_SELECTOR, "div.title > a")
-                title = title_tag.text.strip()
-                detail_url = "https://www.ntis.go.kr" + title_tag.get_attribute('href')
-                
-                details = item.find_elements(By.CSS_SELECTOR, "dl > dd")
-                agency = details[0].text.strip() if len(details) > 0 else "N/A"
-                department = details[1].text.strip() if len(details) > 1 else "N/A"
-                period = details[2].text.strip() if len(details) > 2 else "N/A"
-
-                logging.info(f"({i+1}/{limit}) '{title}' 과제의 상세 내용을 분석합니다...")
-                summary_text = self._scrape_detail_page(detail_url)
-                
-                projects.append({
-                    "title": title, "agency": agency, "department": department,
-                    "end_date": period.split('~')[-1].strip() if '~' in period else period,
-                    "url": detail_url, "summary": summary_text, "source": "NTIS Selenium Scraper"
-                })
-            
-            logging.info(f"NTIS Selenium 크롤링으로 {len(projects)}개의 과제를 성공적으로 수집했습니다.")
-            return projects
-        except Exception as e:
-            logging.error(f"NTIS 목록 스크래핑 중 오류 발생: {e}")
-            try:
-                with open("error_page.html", "w", encoding="utf-8") as f:
-                    f.write(self.driver.page_source)
-                logging.info("오류 발생 시점의 화면을 'error_page.html' 파일로 저장했습니다.")
-            except Exception as e_save:
-                logging.error(f"오류 페이지 저장 실패: {e_save}")
-            
-            with open("error.log", "a", encoding="utf-8") as f:
-                f.write(f"\n--- Collector Error ---\n")
-                f.write(traceback.format_exc())
-
-            return None
+    except requests.exceptions.RequestException as e:
+        print(f"API 요청 오류: {e}")
+        return pd.DataFrame()
+    except ET.ParseError as e:
+        print(f"XML 파싱 오류: {e}")
+        return pd.DataFrame()
