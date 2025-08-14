@@ -1,61 +1,45 @@
-# analyzer.py (Updated to use detailed context)
-import logging
-import numpy as np
-from sentence_transformers import SentenceTransformer, util
-from typing import List, Dict
+# analyzer.py
 
-class ContextAnalyzer:
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+
+def analyze_and_select_project(projects_df, keyword):
     """
-    수집된 상세 데이터를 분석하여 LLM에 제공할 핵심 컨텍스트를 생성합니다.
-    제목과 기관 정보를 함께 사용하여 의미 유사도를 분석합니다.
+    수집된 과제들에 대해 점수를 매겨 가장 적합한 과제를 선택하는 분석기.
+    - 점수 기준: 정부투자연구비(60%) + 연구내용 내 키워드 빈도(40%)
     """
-    def __init__(self, model_name='jhgan/ko-sroberta-multitask'):
-        """
-        Args:
-            model_name (str): 한국어 문장 임베딩에 최적화된 Sentence Transformer 모델 이름.
-        """
-        try:
-            self.model = SentenceTransformer(model_name)
-            logging.info(f"문장 임베딩 모델 '{model_name}' 로드 완료.")
-        except Exception as e:
-            logging.error(f"모델 로딩 중 오류 발생: {e}")
-            self.model = None
+    if projects_df.empty:
+        return None  # 분석할 과제가 없으면 None 반환
 
-    def get_ranked_context(self, user_topic: str, projects: List[Dict[str, str]], top_k: int = 5) -> List[Dict[str, str]]:
-        """
-        사용자 주제와 과제들 간의 의미 유사도를 계산하여 상위 K개의 컨텍스트를 반환합니다.
+    # 복사본을 만들어 원본 데이터프레임의 변경을 방지
+    df = projects_df.copy()
 
-        Args:
-            user_topic (str): 사용자가 입력한 연구 주제.
-            projects (List[Dict[str, str]]): DataCollector가 수집한 과제 리스트.
-            top_k (int): 반환할 상위 관련 과제 개수.
+    # --- 1. 정부투자연구비 점수 계산 (정규화) ---
+    # MinMaxScaler를 사용하여 연구비 값을 0과 1 사이의 점수로 변환
+    scaler = MinMaxScaler()
+    # '정부투자연구비'가 0 또는 양수인 값만 필터링하여 음수 값으로 인한 오류 방지
+    valid_budget = df[df['정부투자연구비'] >= 0][['정부투자연구비']]
+    if not valid_budget.empty:
+        df.loc[valid_budget.index, 'budget_score'] = scaler.fit_transform(valid_budget)
+    df['budget_score'] = df['budget_score'].fillna(0) # 유효하지 않은 값은 0으로 처리
 
-        Returns:
-            List[Dict[str, str]]: 관련도 순으로 정렬된 상위 K개의 과제 리스트.
-        """
-        if not self.model:
-            logging.error("모델이 로드되지 않아 분석을 진행할 수 없습니다.")
-            return []
-        if not projects:
-            logging.warning("분석할 프로젝트 데이터가 없습니다.")
-            return []
-        
-        # 분석을 위해 '제목'과 '공고기관'을 합친 텍스트 생성
-        # 예: "인공지능 기반 신약 개발 (한국연구재단)"
-        context_texts = [f"제목: {p.get('title', '')}\n내용: {p.get('summary', '')}" for p in projects]
-        
-        # 사용자 주제와 과제 텍스트들을 벡터로 변환 (임베딩)
-        topic_embedding = self.model.encode(user_topic, convert_to_tensor=True)
-        project_embeddings = self.model.encode(context_texts, convert_to_tensor=True)
-        
-        # 코사인 유사도 계산
-        cos_scores = util.cos_sim(topic_embedding, project_embeddings)[0]
-        
-        # 점수가 높은 순으로 정렬하여 상위 K개의 인덱스 추출
-        # argsort는 오름차순이므로, 음수로 만들어 내림차순 효과를 줌
-        top_results_indices = np.argsort(-cos_scores.cpu().numpy())[:top_k]
-        
-        ranked_projects = [projects[i] for i in top_results_indices]
-        logging.info(f"'{user_topic}'와 가장 관련성 높은 상위 {len(ranked_projects)}개의 과제를 선별했습니다.")
-        
-        return ranked_projects
+    # --- 2. 키워드 빈도 점수 계산 (정규화) ---
+    # '연구내용' 컬럼이 문자열이 아닌 경우를 대비해 str로 변환하고, 결측값(NA)은 빈 문자열로 대체
+    df['keyword_freq'] = df['연구내용'].astype(str).str.count(keyword)
+    
+    # MinMaxScaler를 사용하여 키워드 빈도 값을 0과 1 사이의 점수로 변환
+    valid_freq = df[df['keyword_freq'] >= 0][['keyword_freq']]
+    if not valid_freq.empty:
+        df.loc[valid_freq.index, 'freq_score'] = scaler.fit_transform(valid_freq)
+    df['freq_score'] = df['freq_score'].fillna(0) # 유효하지 않은 값은 0으로 처리
+
+    # --- 3. 최종 점수 계산 (가중치 적용) ---
+    # 설정한 가중치 6:4를 적용하여 최종 점수 계산
+    df['total_score'] = (0.6 * df['budget_score']) + (0.4 * df['freq_score'])
+
+    # --- 4. 최고 점수 과제 선택 ---
+    # 최종 점수가 가장 높은 과제의 인덱스를 찾아 해당 행을 반환
+    best_project_index = df['total_score'].idxmax()
+    best_project = df.loc[best_project_index]
+
+    return best_project
