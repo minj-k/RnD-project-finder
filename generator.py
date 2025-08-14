@@ -1,106 +1,85 @@
-# generator.py (Updated to use detailed context)
+# generator.py
+
 import os
-import logging
 import google.generativeai as genai
-from typing import List, Dict
 
-class ProposalGenerator:
-    """LLM을 이용해 상세 컨텍스트를 기반으로 연구 제안서를 단계적으로 생성합니다."""
-    def __init__(self, model_name='gemini-1.5-pro-latest'):
-        """
-        Args:
-            model_name (str): 사용할 Google Gemini 모델 이름.
-        """
-        try:
-            api_key = os.getenv('GOOGLE_API_KEY')
-            if not api_key:
-                raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model_name)
-            logging.info(f"LLM 생성 모델 '{model_name}' 준비 완료.")
-        except Exception as e:
-            logging.error(f"LLM 모델 초기화 중 오류: {e}")
-            self.model = None
+def setup_api_key():
+    """
+    환경 변수에서 Google API 키를 설정합니다.
+    키가 없으면 사용자에게 설정 방법을 안내합니다.
+    """
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print("!!!               Google API 키가 설정되지 않았습니다.            !!!")
+        print("!!! 1. https://aistudio.google.com/app/apikey 에서 키를 받으세요. !!!")
+        print("!!! 2. 아래 방법 중 하나로 API 키를 설정해주세요.                 !!!")
+        print("!!!    - (권장) 환경 변수 'GOOGLE_API_KEY'에 키 값을 등록        !!!")
+        print("!!!    - 또는, 아래 코드의 'YOUR_API_KEY' 부분을 직접 수정      !!!")
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # 아래 라인의 주석을 해제하고 키를 직접 입력할 수도 있습니다.
+        # api_key = "여기에_API_키를_붙여넣으세요"
+    
+    if api_key:
+        genai.configure(api_key=api_key)
+        return True
+    return False
 
-    def _generate(self, prompt: str) -> str:
-        """LLM API 호출을 위한 내부 헬퍼 함수"""
-        if not self.model:
-            return "오류: LLM 모델이 초기화되지 않았습니다."
-        try:
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            logging.error(f"LLM 생성 중 오류: {e}")
-            return f"오류: LLM API 호출에 실패했습니다. ({e})"
+def generate_draft_from_project(project_info, new_topic):
+    """
+    선택된 과제 정보와 새로운 주제로 Gemini에게 전달할 프롬프트를 만들어
+    실제 R&D 과제 계획서 초안을 생성합니다.
+    """
+    if project_info is None:
+        return "분석된 과제 정보가 없어 초안을 생성할 수 없습니다."
 
-    def _format_context(self, ranked_context: List[Dict[str, str]]) -> str:
-        context_lines = []
-        for p in ranked_context:
-            summary_preview = (p.get('summary', 'N/A')[:200] + '...') if p.get('summary') else 'N/A'
-            line = (
-                f"- 제목: {p.get('title', 'N/A')}\n"
-                f"  (기관: {p.get('department', 'N/A')}, 마감일: {p.get('end_date', 'N/A')})\n"
-                f"  주요 내용: {summary_preview}"
-            )
-            context_lines.append(line)
-        return "\n\n".join(context_lines)
+    # 1. LLM에게 역할을 부여하고, 명확한 지시를 내리는 '프롬프트 엔지니어링'
+    prompt = f"""
+    # 페르소나 설정:
+    당신은 대한민국 정부 R&D 과제 기획 전문가입니다. 수많은 과제 제안서를 작성하고 평가해 본 경험이 있습니다. 전문적이고 논리적인 어투를 사용합니다.
 
-    def generate_full_proposal(self, user_topic: str, ranked_context: List[Dict[str, str]]) -> str:
-        """다단계 프롬프트를 통해 완전한 제안서를 생성합니다."""
-        if not ranked_context:
-            logging.warning("컨텍스트 정보 없이 제안서 생성을 시도합니다.")
-        
-        formatted_context = self._format_context(ranked_context)
-        
-        # 1단계: 제목 생성 프롬프트
-        prompt1_title = f"""
-**역할:** 당신은 대한민국 정부 R&D 과제 기획 전문가입니다.
+    # 미션:
+    아래에 제시된 '참고 과제 정보'를 바탕으로, '새로운 연구 주제'에 대한 혁신적인 R&D 과제 계획서 초안을 작성해 주세요.
 
-**임무:** 아래 '핵심 연구 주제'와 '최신 관련 과제 동향'을 깊이 있게 분석하여, 정부 과제 심사위원의 주목을 받을 만한 혁신적이고 구체적인 국문 연구과제 제목 5개를 제안하시오. 제목에는 핵심 기술과 최종 목표가 명확히 드러나야 합니다.
+    # 참고 과제 정보:
+    - **기존 과제명**: {project_info['국문과제명']}
+    - **기존 연구 목표**: {project_info['연구목표']}
+    - **기존 연구 내용**: {project_info['연구내용']}
+    - **기존 한글 키워드**: {project_info['한글키워드']}
 
-**핵심 연구 주제:**
-{user_topic}
+    # 새로운 연구 주제:
+    - **{new_topic}**
 
-**최신 관련 과제 동향 (컨텍스트):**
-{formatted_context}
+    # 결과물 형식 (반드시 이 목차와 형식을 엄격히 준수해 주세요):
+    ## 1. 연구의 필요성
+    - (새로운 연구 주제의 기술적, 사회적, 경제적 중요성을 기존 과제의 연구 배경과 연결하여 설득력 있게 서술)
 
-**결과물 (제목 5개만, 번호 목록으로):**
-"""
-        titles_text = self._generate(prompt1_title)
-        
-        # 생성된 제목 중 첫 번째 제목을 대표로 선택
-        try:
-            best_title = titles_text.splitlines()[0].split('. ')[1]
-        except IndexError:
-            best_title = user_topic # 제목 생성 실패 시 사용자 주제를 제목으로 사용
-            titles_text = "1. " + user_topic
+    ## 2. 연구의 최종 목표
+    - (새로운 연구 주제를 달성하기 위한 최종 결과물을 명확하고 정량적으로 제시. 예를 들어 '...성능의 ... 시스템 개발' 또는 '... 정확도의 ... 알고리즘 구현')
 
-        # 2단계: 본문 생성 프롬프트
-        prompt2_body = f"""
-**역할:** 당신은 20년 경력의 수석 연구기획자(PI)로서, 정부 과제 제안서 최종본을 작성하고 있습니다.
+    ## 3. 연구 내용 및 추진 전략
+    - **1차 년도**: (연구의 기반을 다지는 단계. 기존 과제의 초기 연구 방법을 참고하여 구체적인 연구 내용 서술)
+    - **2차 년도**: (핵심 기술을 개발하고 프로토타입을 구현하는 단계. 기존 과제의 핵심 연구 내용을 발전시키는 방향으로 서술)
+    - **3차 년도**: (개발된 기술을 고도화하고 성능을 검증하는 단계. 최종 목표 달성을 위한 구체적인 계획 서술)
 
-**임무:** 아래 '선정된 연구 제목'과 '상세 기술 동향'을 바탕으로, 아래 목차에 맞춰 매우 상세하고 논리적인 연구 제안서 초안을 작성하시오. 문체는 전문적이고 설득력 있어야 하며, 각 항목은 2~3개의 문단으로 구체적인 근거를 들어 서술해야 합니다. 특히, 컨텍스트의 '소관부처'나 '공고기관'의 특성을 고려하여 제안서의 방향성을 맞추면 좋습니다.
+    ## 4. 기대효과 및 활용 방안
+    - **기술적 측면**: (본 연구를 통해 확보 가능한 독창적인 기술과 지식재산권(특허)을 예측)
+    - **경제적·산업적 측면**: (개발된 기술이 관련 산업에 미칠 파급효과와 시장 창출 가능성을 제시)
 
-**선정된 연구 제목:**
-{best_title}
+    # 추가 지시사항:
+    - 참고 과제의 내용을 그대로 복사하지 마세요. 아이디어와 구조, 전문 용어만 참고하여 완전히 새로운 내용을 창작해야 합니다.
+    - 각 목차의 내용은 구체적이고 전문적인 근거를 바탕으로 작성해 주세요.
+    """
 
-**상세 기술 동향 (컨텍스트):**
-{formatted_context}
+    # 2. Gemini API 호출
+    try:
+        if not setup_api_key():
+            return "API 키가 설정되지 않아 초안 생성을 진행할 수 없습니다."
 
-**작성할 목차:**
-1.  **연구개발의 필요성:** 이 연구가 왜 지금 시급하고 중요한지 기술적, 사회적, 정책적 관점에서 구체적으로 설명. (예: '최근 OOO부에서 공고한 과제 동향을 볼 때...')
-2.  **연구개발의 최종 목표 및 내용:** 과제를 통해 달성하고자 하는 정량적/정성적 최종 목표와, 이를 달성하기 위한 연차별 세부 연구 내용을 구체적으로 서술.
-3.  **연구개발 방법 및 추진 전략:** 각 세부 연구 내용을 어떤 최신 기술과 검증된 방법론으로 수행할 것인지 구체적인 실행 계획을 제시.
-4.  **기대효과 및 활용방안:** 연구 성공 시 예상되는 기술적 파급효과와, 결과물이 산업 및 공공 분야에서 어떻게 활용될 수 있는지 구체적인 계획을 제시.
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        response = model.generate_content(prompt)
+        return response.text
 
-**결과물 (Markdown 형식의 상세 서술):**
-"""
-        body_text = self._generate(prompt2_body)
-        
-        # 최종 결과물 조합
-        final_proposal = f"# 제안서: {best_title}\n\n"
-        final_proposal += "## AI 추천 과제 제목 리스트\n" + titles_text + "\n\n"
-        final_proposal += "--- \n\n"
-        final_proposal += "## 상세 제안 내용\n" + body_text
-        
-        return final_proposal
+    except Exception as e:
+        print(f"LLM API 호출 중 오류가 발생했습니다: {e}")
+        return "초안 생성에 실패했습니다. API 키 또는 네트워크 상태를 확인해주세요."
