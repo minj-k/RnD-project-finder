@@ -3,83 +3,59 @@
 import os
 import google.generativeai as genai
 
-def setup_api_key():
-    """
-    환경 변수에서 Google API 키를 설정합니다.
-    키가 없으면 사용자에게 설정 방법을 안내합니다.
-    """
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        print("!!!               Google API 키가 설정되지 않았습니다.            !!!")
-        print("!!! 1. https://aistudio.google.com/app/apikey 에서 키를 받으세요. !!!")
-        print("!!! 2. 아래 방법 중 하나로 API 키를 설정해주세요.                 !!!")
-        print("!!!    - (권장) 환경 변수 'GOOGLE_API_KEY'에 키 값을 등록        !!!")
-        print("!!!    - 또는, 아래 코드의 'YOUR_API_KEY' 부분을 직접 수정      !!!")
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        # 아래 라인의 주석을 해제하고 키를 직접 입력할 수도 있습니다.
-        # api_key = "여기에_API_키를_붙여넣으세요"
-    
-    if api_key:
-        genai.configure(api_key=api_key)
-        return True
-    return False
+class ProposalGenerator:
+    def __init__(self):
+        # 클래스 생성 시 API 키 설정 시도
+        self.api_key_configured = self._setup_api_key()
 
-def generate_draft_from_project(project_info, new_topic):
-    """
-    선택된 과제 정보와 새로운 주제로 Gemini에게 전달할 프롬프트를 만들어
-    실제 R&D 과제 계획서 초안을 생성합니다.
-    """
-    if project_info is None:
-        return "분석된 과제 정보가 없어 초안을 생성할 수 없습니다."
+    def _setup_api_key(self):
+        """환경 변수에서 API 키를 설정합니다."""
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if api_key:
+            genai.configure(api_key=api_key)
+            return True
+        return False
 
-    # 1. LLM에게 역할을 부여하고, 명확한 지시를 내리는 '프롬프트 엔지니어링'
-    prompt = f"""
-    # 페르소나 설정:
-    당신은 대한민국 정부 R&D 과제 기획 전문가입니다. 수많은 과제 제안서를 작성하고 평가해 본 경험이 있습니다. 전문적이고 논리적인 어투를 사용합니다.
+    def generate_full_proposal(self, user_topic, ranked_context):
+        """관련 과제 목록을 바탕으로 완전한 제안서를 생성합니다."""
+        if not self.api_key_configured:
+            return "오류: GOOGLE_API_KEY가 .env 파일에 설정되지 않았습니다."
+        if not ranked_context:
+            return "오류: 분석된 참고 과제가 없습니다."
 
-    # 미션:
-    아래에 제시된 '참고 과제 정보'를 바탕으로, '새로운 연구 주제'에 대한 혁신적인 R&D 과제 계획서 초안을 작성해 주세요.
+        # 여러 참고 과제 정보를 프롬프트에 포함시키기 위해 문자열로 변환
+        context_str = ""
+        for i, proj in enumerate(ranked_context, 1):
+            context_str += f"\n--- 참고자료 {i} ---\n"
+            context_str += f"과제명: {proj.get('pjtTitle', 'N/A')}\n"
+            context_str += f"연구목표: {proj.get('pjtGoal', 'N/A')}\n"
+            context_str += "----------------\n"
 
-    # 참고 과제 정보:
-    - **기존 과제명**: {project_info['국문과제명']}
-    - **기존 연구 목표**: {project_info['연구목표']}
-    - **기존 연구 내용**: {project_info['연구내용']}
-    - **기존 한글 키워드**: {project_info['한글키워드']}
+        prompt = f"""
+        # 페르소나:
+        당신은 대한민국 정부 R&D 과제 기획 전문가입니다.
 
-    # 새로운 연구 주제:
-    - **{new_topic}**
+        # 미션:
+        '새로운 연구 주제'에 대한 혁신적인 R&D 과제 계획서 초안을 작성하세요.
+        아래 '참고 자료'들을 종합적으로 분석하여, 각 자료의 강점을 흡수하고 독창적인 아이디어를 더해 설득력 있는 계획서를 만들어야 합니다.
 
-    # 결과물 형식 (반드시 이 목차와 형식을 엄격히 준수해 주세요):
-    ## 1. 연구의 필요성
-    - (새로운 연구 주제의 기술적, 사회적, 경제적 중요성을 기존 과제의 연구 배경과 연결하여 설득력 있게 서술)
+        # 새로운 연구 주제:
+        {user_topic}
 
-    ## 2. 연구의 최종 목표
-    - (새로운 연구 주제를 달성하기 위한 최종 결과물을 명확하고 정량적으로 제시. 예를 들어 '...성능의 ... 시스템 개발' 또는 '... 정확도의 ... 알고리즘 구현')
+        # 참고 자료 (관련도 높은 순):
+        {context_str}
 
-    ## 3. 연구 내용 및 추진 전략
-    - **1차 년도**: (연구의 기반을 다지는 단계. 기존 과제의 초기 연구 방법을 참고하여 구체적인 연구 내용 서술)
-    - **2차 년도**: (핵심 기술을 개발하고 프로토타입을 구현하는 단계. 기존 과제의 핵심 연구 내용을 발전시키는 방향으로 서술)
-    - **3차 년도**: (개발된 기술을 고도화하고 성능을 검증하는 단계. 최종 목표 달성을 위한 구체적인 계획 서술)
+        # 결과물 형식 (반드시 이 목차를 준수하고, 각 항목을 상세히 서술하세요):
+        ## 1. 제안배경 및 필요성
+        ## 2. 연구개발의 최종 목표 및 내용
+        ## 3. 연구 추진전략 및 체계
+        ## 4. 기대효과 및 성과 활용 방안
+        ## 5. 주요 핵심 키워드 (5개)
+        """
 
-    ## 4. 기대효과 및 활용 방안
-    - **기술적 측면**: (본 연구를 통해 확보 가능한 독창적인 기술과 지식재산권(특허)을 예측)
-    - **경제적·산업적 측면**: (개발된 기술이 관련 산업에 미칠 파급효과와 시장 창출 가능성을 제시)
-
-    # 추가 지시사항:
-    - 참고 과제의 내용을 그대로 복사하지 마세요. 아이디어와 구조, 전문 용어만 참고하여 완전히 새로운 내용을 창작해야 합니다.
-    - 각 목차의 내용은 구체적이고 전문적인 근거를 바탕으로 작성해 주세요.
-    """
-
-    # 2. Gemini API 호출
-    try:
-        if not setup_api_key():
-            return "API 키가 설정되지 않아 초안 생성을 진행할 수 없습니다."
-
-        model = genai.GenerativeModel('gemini-1.5-pro-latest')
-        response = model.generate_content(prompt)
-        return response.text
-
-    except Exception as e:
-        print(f"LLM API 호출 중 오류가 발생했습니다: {e}")
-        return "초안 생성에 실패했습니다. API 키 또는 네트워크 상태를 확인해주세요."
+        try:
+            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return f"LLM API 호출 중 오류가 발생했습니다: {e}"
