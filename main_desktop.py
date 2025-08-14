@@ -1,4 +1,4 @@
-# main_desktop.py
+# main_desktop.py (import 수정 완료)
 
 import sys
 import traceback
@@ -7,7 +7,9 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QSlider, QComboBox,
     QFormLayout, QGroupBox
 )
+# ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 여기가 수정된 부분 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
 from PySide6.QtCore import Qt, QThread, Signal, QObject
+# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 # 기존에 만들었던 로직 모듈들을 임포트합니다.
 from collector import DataCollector
@@ -16,11 +18,8 @@ from generator import ProposalGenerator
 from dotenv import load_dotenv
 
 # --- 백그라운드 작업을 위한 Worker 클래스 ---
-# 시간이 오래 걸리는 작업을 별도 스레드에서 처리하여 GUI 멈춤 현상을 방지합니다.
 class Worker(QObject):
-    # 작업 완료 시 생성된 제안서를 담아 보낼 시그널
     finished = Signal(str)
-    # 작업 진행 상황을 텍스트로 보낼 시그널
     progress = Signal(str)
 
     def __init__(self, user_topic, source, context_count):
@@ -29,7 +28,6 @@ class Worker(QObject):
         self.source = source
         self.context_count = context_count
         
-        # Worker 클래스 내에서 모델들을 초기화합니다.
         load_dotenv()
         self.collector = DataCollector()
         self.analyzer = ContextAnalyzer()
