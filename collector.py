@@ -1,9 +1,9 @@
-# collector.py (import 위치 수정 완료)
+# collector.py
 
 import os
 import requests
 import xml.etree.ElementTree as ET
-from urllib.parse import unquote, urlencode # <--- 여기로 위치를 옮겼습니다.
+from urllib.parse import unquote, urlencode
 
 class DataCollector:
     """
@@ -44,6 +44,7 @@ class DataCollector:
         
         print(f"NTIS API 요청: 주제='{topic}', 개수={limit}")
 
+        # try 블록 시작
         try:
             response = requests.get(URL, params=params, timeout=30)
             response.raise_for_status()
@@ -69,6 +70,7 @@ class DataCollector:
             print(f"NTIS API 응답: {len(project_list)}개의 과제를 성공적으로 파싱했습니다.")
             return project_list
 
+        # ▼▼▼▼▼ try의 짝인 except 블록들 ▼▼▼▼▼
         except requests.exceptions.RequestException as e:
             print(f"오류: NTIS API 요청에 실패했습니다. (네트워크/타임아웃 등) - {e}")
             return []
