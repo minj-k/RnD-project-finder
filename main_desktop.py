@@ -1,4 +1,4 @@
-# main_desktop.py (import 수정 완료)
+# main_desktop.py
 
 import sys
 import traceback
@@ -7,9 +7,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QTextEdit, QSlider, QComboBox,
     QFormLayout, QGroupBox
 )
-# ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 여기가 수정된 부분 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
 from PySide6.QtCore import Qt, QThread, Signal, QObject
-# ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
 # 기존에 만들었던 로직 모듈들을 임포트합니다.
 from collector import DataCollector
@@ -36,7 +34,6 @@ class Worker(QObject):
     def run(self):
         """오류 추적 기능이 강화된 작업 실행 메소드"""
         try:
-            # --- 1. 데이터 수집 단계 ---
             self.progress.emit("1/3 | 데이터 수집 시작...")
             print("[체크포인트] 1. Collector 호출 시작")
             projects = self.collector.collect(
@@ -49,7 +46,6 @@ class Worker(QObject):
                 self.finished.emit(f"오류: {error_message}")
                 return
 
-            # --- 2. 컨텍스트 분석 단계 ---
             self.progress.emit("2/3 | 컨텍스트 분석 시작...")
             print("[체크포인트] 2. Analyzer 호출 시작")
             ranked_context = self.analyzer.get_ranked_context(
@@ -57,7 +53,6 @@ class Worker(QObject):
             )
             print("[체크포인트] 2. Analyzer 호출 완료")
 
-            # --- 3. 제안서 생성 단계 ---
             self.progress.emit("3/3 | AI 제안서 생성 시작...")
             print("[체크포인트] 3. Generator 호출 시작")
             final_proposal = self.generator.generate_full_proposal(
@@ -68,7 +63,6 @@ class Worker(QObject):
             self.finished.emit(final_proposal)
 
         except Exception as e:
-            # 어떤 종류의 오류든 여기서 잡아서 상세하게 보여줍니다
             error_details = traceback.format_exc()
             print(f"!!!!!!!!!!!!!! 오류 발생 !!!!!!!!!!!!!!")
             print(f"오류 타입: {type(e).__name__}")
@@ -86,7 +80,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("🤖 지능형 연구과제 제안서 생성기")
         self.setGeometry(100, 100, 900, 700)
 
-        # UI 위젯 생성
         self.topic_label = QLabel("연구 주제 또는 핵심 아이디어:")
         self.topic_input = QLineEdit()
         self.topic_input.setPlaceholderText("예: 생성형 AI를 활용한 교육 플랫폼")
@@ -111,7 +104,6 @@ class MainWindow(QMainWindow):
         self.result_display.setReadOnly(True)
         self.result_display.setPlaceholderText("이곳에 AI가 생성한 제안서가 표시됩니다...")
 
-        # 레이아웃 설정
         input_group = QGroupBox("입력 설정")
         form_layout = QFormLayout()
         form_layout.addRow(self.topic_label, self.topic_input)
