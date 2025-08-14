@@ -31,9 +31,6 @@ class DataCollector:
 
         URL = "https://www.ntis.go.kr/rndopen/openApi/public_project"
 
-        # --------------------------------------------------------------------
-        # ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ 여기가 핵심 수정 부분 ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
-        # 사용자님이 찾아주신 새로운 파라미터 구조에 맞게 수정합니다.
         params = {
             'apprvKey': unquote(self.ntis_api_key), # 'apprVkey' -> 'apprvKey' (소문자 v)로 변경
             'query': topic,
@@ -47,8 +44,7 @@ class DataCollector:
             'boostquery': "",
             'addQuery': ""
         }
-        # ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
-        # --------------------------------------------------------------------
+
         
         final_url = f"{URL}?{urlencode(params, encoding='UTF-8')}"
         print("----------------------------------------------------------------------")
